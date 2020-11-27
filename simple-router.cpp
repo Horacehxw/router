@@ -33,9 +33,19 @@ inline bool isRouterMac(const Buffer& mac, const Interface* inIface) {
   return mac == inIface->addr;
 }
 
-void handleArpPacket(const uint8_t* packet, const Interface* inIface) {
-  arp_hdr* arpHeader = (arp_hdr*)packet;
-  // examine hardware type, protocol type, opcode
+void handleArpPacket(const Buffer& packetBuffer, const Interface* inIface) {
+  uint8_t* packet = packetBuffer.data();
+  arp_hdr* arpHeader = (arp_hdr*) (packet + sizeof(ethernet_hdr));
+
+  /* sanity check */
+
+  // check packet size
+  if (packetBuffer.size() < sizeof(ethernet_hdr) + sizeof(arp_hdr)) {
+    std::cerr << "Received packet, but size is less than arp minimum, ignoring" << std::endl;      
+    return;
+  }
+
+  // check hardware type, protocol type, opcode
   if (arpHeader->arp_hrd != arp_hrd_ethernet || arpHeader->arp_pro != ethertype_ip ||
       arpHeader->arp_op != arp_op_request || arpHeader->arp_op != arp_op_reply) {
     std::cerr << "Received arp packet, but hardware type, protocol type or operator code is unknown, ignoring" << std::endl;
@@ -45,7 +55,7 @@ void handleArpPacket(const uint8_t* packet, const Interface* inIface) {
   Buffer arpTargetMac(arpHeader->arp_tha, arpHeader->arp_tha + ETHER_ADDR_LEN);
   Buffer arpSourceMac(arpHeader->arp_sha, arpHeader->arp_sha + ETHER_ADDR_LEN);
 
-  /* handle arp request */
+  /* handle arp request/reply */
 
   if (arpHeader->arp_op == arp_op_request) {
     // examine destination hardware address(target mac address)
@@ -55,8 +65,10 @@ void handleArpPacket(const uint8_t* packet, const Interface* inIface) {
     }
 
     /* add request info to arp cache */
-
-    m_arp.insertArpEntry(arpSourceMac, arpHeader->arp_sip);  
+    entry = m_arp.lookup(ipHeader->ip_src);
+    if (!entry) {
+      m_arp.insertArpEntry(arpSourceMac, arpHeader->arp_sip);  
+    }
     
     /* make response */
     const size_t frameSize = sizeof(arp_hdr) + sizeof(ethernet_hdr);
@@ -87,18 +99,15 @@ void handleArpPacket(const uint8_t* packet, const Interface* inIface) {
     sendPacket(frame, inIface->name);
     return;
   }
-
-  /* handle arp reply */
-
   else if (arpHeader->arp_op == arp_op_reply) {
-    // examine destination hardware address(target mac address)
-    if (!isRouterMac(arpTargetMac, inIface) {
+    // check destination hardware address(target mac address)
+    if (!isRouterMac(arpTargetMac, inIface)) {
       std::cerr << "Received arp reply packet, but target mac address is not router's one, ignoring" << std::endl;
       return;
     }
 
     /* add request info to arp cache */
-
+    // ! maybe need to check entry existence before adding too!
     std::shared_ptr<ArpRequest> request = m_arp.insertArpEntry(arpSourceMac, arpHeader->arp_sip);  
 
     /* send all packets attached to the arp request */
@@ -114,21 +123,14 @@ void handleArpPacket(const uint8_t* packet, const Interface* inIface) {
     /* remove the arp request from request queue maintained by m_arp*/
 
     m_arp.removeRequest(request);
-
-    return;
   }
 }
 
-void handleIcmpPacket(const uint8_t* packet, const Interface* inIface) {
+void handleIcmpPacket(const Buffer& packetBuffer, const Interface* inIface) {
   return;
 }
 
-void handleIpPacket(const uint8_t* packet, const Interface* inIface) {
-  ip_hdr* ipHeader = (ip_hdr*)packet;
-  /* basic check of packet */
-  // examine checksum in ip header
-  
-
+void handleNormalIpPacket(const Buffer& packetBuffer, const Interface* inIface) {
   /* look up the arp cache table */
   std::shared_ptr<ArpEntry> arpEntry = m_arp.lookup(ipHeader->ip_dst);
   if (arpEntry) { // find successfully
@@ -143,8 +145,138 @@ void handleIpPacket(const uint8_t* packet, const Interface* inIface) {
   return;
 }
 
-void sendIcmpPacket(const Buffer& packet, const std::string& outIface) {
-  return;
+void handleIpPacket(const Buffer& packetBuffer, const Interface* inIface) {
+  uint8_t* packet = packetBuffer.data();
+  ethernet_hdr* ethernetHeader = (ethernet_hdr*) packet;
+  ip_hdr* ipHeader = (ip_hdr*) (packet + sizeof(ethernet_hdr));
+  icmp_hdr* icmpHeader = (icmp_hdr*) (packet + sizeof(ethernet_hdr) + sizeof(ip_hdr));
+
+  /* sanity check packet */
+  // check packet size
+  if (packetBuffer.size() < sizeof(ethernet_hdr) + sizeof(ip_hdr)) {
+    std::cerr << "Received ip packet, but size is less than ip minimum, ignoring" << std::endl;
+    return;
+  }
+
+  // check checksum of packet
+  uint16_t ipChecksum = ipHeader->checksum;
+  ipHeader->checksum = 0;
+  if (cksum(ipHeader, sizeof(ip_hdr)) != ipChecksum) {
+    std::cerr << "Received icmp packet, but bit error happened because of checksum mismatch, ignoring" << std::endl;
+    return;
+  }
+
+  // add received packet info to arp cache
+  // !!!: add variable type
+  entry = m_arp.lookup(ipHeader->ip_src);
+  if (!entry) {
+    Buffer mac(ethernetHeader->ether_shost, ethernetHeader->ether_shost + ETHER_ADDR_LEN);
+    m_arp.insertArpEntry(mac, ipHeader->ip_src);
+  }
+  
+  // TODO: check if ttl <= 0, and send an icmp "time exceeding" packet
+  if (ipHeader->ttl <= 0) {
+    std::cerr << "Received icmp packet, but time exceeding, send this signal" << std::endl;
+    sendIcmpT3Packet(packetBuffer, inIface, 11, 0);
+    return;
+  }
+
+  // destination ip address is targeted to router,
+  // which indicates an *icmp* packet
+  if (ipHeader->ip_dst == iface->ip) {  // ? do other interfaces of router count?
+
+    // check packet size
+    if (packetBuffer.size() < sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_hdr)) {
+      std::cerr << "Received icmp packet, but size is less than icmp minimum, ignoring" << std::endl;
+      return;
+    }
+
+    // TODO: check if packet isn't an icmp echo request, and send an icmp "unreachable port or host" packet
+    if (ipHeader->ip_p != ip_protocol_icmp || icmpHeader->icmp_type != 8) {
+      std::cerr << "Received icmp packet, but protocol data is not icmp or packet is not echo request, send this signal" << std::endl;
+      sendIcmpT3Packet(packetBuffer, inIface, 3, 3);
+      return;
+    }
+    // send echo reply to the echo request(received packet)
+    sendIcmpPacket(packet, inIface, 0, 0);
+  }
+
+  // destination ip address is not targeted to router,
+  // which indicates a normal ip packet
+  else {
+    RoutingTableEntry entry
+    handleNormalIpPacket(packetBuffer, iface);
+  }
+}
+
+void sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIface, uint8_t type, uint8_t code) {
+  uint8_t* inPacket = inPacketBuffer.data();
+  const size_t frameSize = sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_hdr);
+  uint8_t outPacket[frameSize];
+  memcpy(outPacket, inPacket, frameSize);
+  // inPacket
+  ethernet_hdr* inEthernetHeader = (ethernet_hdr*) inPacket;
+  ip_hdr* inIpHeader = (ip_hdr*) (inPacket + sizeof(ethernet_hdr));
+  // outPacket
+  ethernet_hdr* outEthernetHeader = (ethernet_hdr*) outPacket;
+  ip_hdr* outIpHeader = (ip_hdr*) (outPacket + sizeof(ethernet_hdr));
+  icmp_hdr* outIcmpHeader = (icmp_hdr*) (outPacket + sizeof(ethernet_hdr) + sizeof(ip_hdr));
+
+  // fill in ethernet header
+  memcpy(outEthernetHeader->ether_shost, inIcmpHeader->ether_dhost, ETHER_ADDR_LEN);
+  memcpy(outEthernetHeader->ether_dhost, inIcmpHeader->ether_shost, ETHER_ADDR_LEN);
+
+  // fill in ip header
+  outIpHeader->ip_len = sizeof(ip_hdr) + sizeof(icmp_t3_hdr);
+  outIpHeader->ip_ttl = 64;
+  outIpHeader->ip_p = ip_protocol_icmp;
+  outIpHeader->checksum = 0;
+  outIpHeader->checksum = cksum(outIpHeader, sizeof(ip_hdr));
+
+  // fill in icmp header
+  outIcmpHeader->icmp_type = type;
+  outIcmpHeader->icmp_code = code;
+  outIcmpHeader->checksum = 0;
+  outIcmpHeader->checksum = cksum(outIcmpHeader, sizeof(ip_t3_hdr));
+
+  Buffer outPacketBuffer(outPacket, outPacket + frameSize);
+  sendPacket(outPacketBuffer, inIface->name);
+}
+
+void sendIcmpT3Packet(const Buffer& inPacketBuffer, const Interface* inIface, uint8_t type, uint8_t code) {
+  uint8_t* inPacket = packetBuffer.data();
+  const size_t frameSize = sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_t3_hdr);
+  uint8_t outPacket[frameSize];
+  memcpy(outPacket, inPacket, frameSize);
+  // inPacket
+  ethernet_hdr* inEthernetHeader = (ethernet_hdr*) inPacket;
+  ip_hdr* inIpHeader = (ip_hdr*) (inPacket + sizeof(ethernet_hdr));
+  // outPacket
+  ethernet_hdr* outEthernetHeader = (ethernet_hdr*) outPacket;
+  ip_hdr* outIpHeader = (ip_hdr*) (outPacket + sizeof(ethernet_hdr));
+  icmp_t3_hdr* outIcmpHeader = (icmp_t3_hdr*) (outPacket + sizeof(ethernet_hdr) + sizeof(ip_hdr));
+
+  // fill in ethernet header
+  memcpy(outEthernetHeader->ether_shost, inIcmpHeader->ether_dhost, ETHER_ADDR_LEN);
+  memcpy(outEthernetHeader->ether_dhost, inIcmpHeader->ether_shost, ETHER_ADDR_LEN);
+
+  // fill in ip header
+  outIpHeader->ip_len = sizeof(ip_hdr) + sizeof(icmp_t3_hdr);
+  outIpHeader->ip_ttl = 64;
+  outIpHeader->ip_p = ip_protocol_icmp;
+  outIpHeader->checksum = 0;
+  outIpHeader->checksum = cksum(outIpHeader, sizeof(ip_hdr));
+
+  // fill in icmp header
+  outIcmpHeader->icmp_type = type;
+  outIcmpHeader->icmp_code = code;
+  outIcmpHeader->unused = 0;
+  memcpy(outIcmpHeader->data, inIpHeader, ICMP_DATA_SIZE);
+  outIcmpHeader->checksum = 0;
+  outIcmpHeader->checksum = cksum(outIcmpHeader, sizeof(ip_t3_hdr));
+
+  Buffer outPacketBuffer(outPacket, outPacket + frameSize);
+  sendPacket(outPacketBuffer, inIface->name);
 }
 
 // IMPLEMENT THIS METHOD
@@ -163,7 +295,7 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
 
   // FILL IN
 
-  // examine packet size
+  // examine packet size(preliminary judgment)
   if (packet.size() < sizeof(ethernet_hdr)) {
     std::cerr << "Received packet, but size is less than ethernet minimum, ignoring" << std::endl;
     return;
@@ -171,6 +303,7 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
 
   uint8_t* frame = packet.data();
   ethernet_hdr* ethernetHeader = (ethernet_hdr*) frame;
+
   Buffer etherTargetMac(ethernetHeader->ether_dhost, ethernetHeader->ether_dhost + ETHER_ADDR_LEN);
   Buffer etherSourceMac(ethernetHeader->ether_shost, ethernetHeader->ether_shost + ETHER_ADDR_LEN);
   if (!isBroadcastMac(etherTargetMac) || !isRouterMac(etherTargetMac, iface)) {
@@ -181,12 +314,6 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
   // handle packet according to its type(arp or ipv4)
   uint8_t* datagram = frame + sizeof(ethernet_hdr);
   if (ethernetHeader->ether_type == ethertype_arp) {
-    // examine packet size
-    if (packet.size() < sizeof(ethernet_hdr) + sizeof(arp_hdr)) {
-      std::cerr << "Received packet, but size is less than arp minimum, ignoring" << std::endl;
-      return;
-    }
-
     arp_hdr* arpHeader = (arp_hdr*) datagram;
 
     // arp req/rep travels between two close nodes,
@@ -204,34 +331,12 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
       return;
     }
 
-    handleArpPacket(datagram, iface);
+    handleArpPacket(packet, iface);
   } 
   else if (ethernet_hdr->ether_type == ethertype_ip) {
     ip_hdr* ipHeader = (ip_hdr*)datagram;
-
-    // destination ip address is targeted to router,
-    // which indicates an icmp packet
-    if (ipHeader->ip_dst == iface->ip) {
-      // examine packet size
-      if (packet.size() < sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_hdr)) {
-        std::cerr << "Received icmp packet, but size is less than icmp minimum, ignoring" << std::endl;
-        return;
-      }
-
-      handleIcmpPacket(datagram, iface);
-    }
-
-    // destination ip address is not targeted to router,
-    // which indicates a normal ip packet
-    else {
-      // examine packet size
-      if (packet.size() < sizeof(ethernet_hdr) + sizeof(ip_hdr)) {
-        std::cerr << "Received ip packet, but size is less than ip minimum, ignoring" << std::endl;
-        return;
-      }
-
-      handleIpPacket(datagram, iface);
-    }
+    
+    handleIpPacket(packet, iface);
   } 
   else {
     std::cerr << "Received packet, but ether type is unknown, ignoring" << std::endl;
