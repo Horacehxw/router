@@ -55,7 +55,7 @@ void handleArpPacket(const Buffer& packetBuffer, const Interface* inIface) {
   Buffer arpTargetMac(arpHeader->arp_tha, arpHeader->arp_tha + ETHER_ADDR_LEN);
   Buffer arpSourceMac(arpHeader->arp_sha, arpHeader->arp_sha + ETHER_ADDR_LEN);
 
-  /* handle arp request/reply */
+  /* handle arp request or reply */
 
   if (arpHeader->arp_op == arp_op_request) {
     // examine destination hardware address(target mac address)
@@ -71,32 +71,11 @@ void handleArpPacket(const Buffer& packetBuffer, const Interface* inIface) {
     }
     
     /* make response */
-    const size_t frameSize = sizeof(arp_hdr) + sizeof(ethernet_hdr);
-    uint8_t frameRaw[frameSize];
-
-    // fill in ethernet header
-    ethernet_hdr* frameEthernetHeader = (ethernet_hdr*)frameRaw;
-    memcpy(frameEthernetHeader->ether_dhost, arpHeader->sha, ETHER_ADDR_LEN);
-    memcpy(frameEthernetHeader->ether_shost, &(inIface->addr[0]), ETH_ADDR_LEN);
-    frameEthernetHeader->ether_type = ethertype_arp;
-
-    // fill in arp header
-    arp_hdr* frameArpHeader = (arp_hdr*)(frameRaw + sizeof(ethernet_hdr));
-    frameArpHeader->arp_hrd = arp_hrd_ethernet;
-    frameArpHeader->arp_pro = ethertype_ip;
-    frameArpHeader->arp_hln = 0x06;
-    frameArpHeader->arp_pln = 0x04;
-    frameArpHeader->arp_op = arp_op_reply;
-    memcpy(frameArpHeader->arp_sha, &(inIface->addr[0]), ETHER_ADDR_LEN);
-    frameArpHeader->arp_sip = inIface->ip;
-    memcpy(frameArpHeader->arp_tha, arpHeader->arp_sha, ETHER_ADDR_LEN);
-    frameArpHeader->arp_tip = arpHeader->arp_tip;
-
-    // convert to buffer
-    Buffer frame(frameRaw, frameRaw + frameSize);
-
-    // send arp reply packet
-    sendPacket(frame, inIface->name);
+    uint32_t srcIp = inIface->ip;
+    Buffer srcMac = inIface->mac;
+    uint32_t destIp = arpHeader->arp_sip;
+    Buffer destMac(arpHeader->arp_sha, arpHeader->arp_sha + ETHER_ADDR_LEN);
+    sendArpPacket(srcIp, srcMac, destIp, destMacm, arp_op_reply);
     return;
   }
   else if (arpHeader->arp_op == arp_op_reply) {
@@ -106,24 +85,53 @@ void handleArpPacket(const Buffer& packetBuffer, const Interface* inIface) {
       return;
     }
 
-    /* add request info to arp cache */
+    // add request info to arp cache
     // ! maybe need to check entry existence before adding too!
     std::shared_ptr<ArpRequest> request = m_arp.insertArpEntry(arpSourceMac, arpHeader->arp_sip);  
 
-    /* send all packets attached to the arp request */
-
+    // forward all packets attached to the arp request
     for (auto it = request.packets.begin(); it != request.packets.end(); it++) {
       uint8_t* packetRaw = it->packet.data();
       ethernet_hdr* ethernetHeader = (ethernet_hdr*) (packetRaw);
       memcpy(ethernetHeader->ether_dhost, arpHeader->arp_sha, ETHER_ADDR_LEN);
-      
+      memcpy(ethernetHeader->ether_shost, )
       sendPacket(it->packet, it->iface);
     }
 
-    /* remove the arp request from request queue maintained by m_arp*/
-
+    // remove the arp request from request queue maintained by m_arp
     m_arp.removeRequest(request);
   }
+}
+
+void sendArpPacket(const uint32_t srcIp, const Buffer& srcMac, const uint32_t destIp, const Buffer& destMac, const arp_opcode arp_op) {
+  const size_t frameSize = sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(arp_hdr);
+  uint8_t outPacket[frameSize];
+  // outPacket
+  ethernet_hdr* outEthernetHeader = (ethernet_hdr*) outPacket;
+  arp_hdr* outArpHeader = (arp_hdr*) (outPacket + sizeof(ethernet_hdr));
+
+  // fill in ethernet header
+  memcpy(outEthernetHeader->ether_dhost, &(destMac[0]), ETHER_ADDR_LEN);
+  memcpy(outEthernetHeader->ether_shost, &(srcMac[0]), ETHER_ADDR_LEN);
+  outEthernetHeader->ether_type = ethtype_arp;
+
+  // fill in arp header
+  outArpHeader->arp_hrd = arp_hrd_ethernet;
+  outArpHeader->arp_pro = ethertype_ip;
+  outArpHeader->arp_hln = 0x06;
+  outArpHeader->arp_pln = 0x04;
+  outArpHeader->arp_op = arp_op;
+  memcpy(outArpHeader->arp_sha, &(srcMac[0]), ETHER_ADDR_LEN);
+  outArpHeader->arp_sip = srcIp;
+  memcpy(outArpHeader->arp_tha, &(destMac[0]), ETHER_ADDR_LEN);
+  outArpHeader->arp_tip = destIp;
+
+  // convert to Buffer
+  Buffer outPacketBuffer(outPacket, outPacket + frameSize);
+
+  // find interface and send arp reply packet
+  Interface* outIface = findIfaceByIp(srcIp);
+  sendPacket(outPacketBuffer, outIface->name);
 }
 
 void handleIcmpPacket(const Buffer& packetBuffer, const Interface* inIface) {
@@ -149,7 +157,6 @@ void handleIpPacket(const Buffer& packetBuffer, const Interface* inIface) {
   uint8_t* packet = packetBuffer.data();
   ethernet_hdr* ethernetHeader = (ethernet_hdr*) packet;
   ip_hdr* ipHeader = (ip_hdr*) (packet + sizeof(ethernet_hdr));
-  icmp_hdr* icmpHeader = (icmp_hdr*) (packet + sizeof(ethernet_hdr) + sizeof(ip_hdr));
 
   /* sanity check packet */
   // check packet size
@@ -167,8 +174,7 @@ void handleIpPacket(const Buffer& packetBuffer, const Interface* inIface) {
   }
 
   // add received packet info to arp cache
-  // !!!: add variable type
-  entry = m_arp.lookup(ipHeader->ip_src);
+  std::shared_ptr<ArpEntry> entry = m_arp.lookup(ipHeader->ip_src);
   if (!entry) {
     Buffer mac(ethernetHeader->ether_shost, ethernetHeader->ether_shost + ETHER_ADDR_LEN);
     m_arp.insertArpEntry(mac, ipHeader->ip_src);
@@ -191,7 +197,7 @@ void handleIpPacket(const Buffer& packetBuffer, const Interface* inIface) {
       return;
     }
 
-    // TODO: check if packet isn't an icmp echo request, and send an icmp "unreachable port or host" packet
+    // check if packet isn't an icmp echo request, and send an icmp "unreachable port or host" packet
     if (ipHeader->ip_p != ip_protocol_icmp || icmpHeader->icmp_type != 8) {
       std::cerr << "Received icmp packet, but protocol data is not icmp or packet is not echo request, send this signal" << std::endl;
       sendIcmpT3Packet(packetBuffer, inIface, 3, 3);
@@ -204,12 +210,49 @@ void handleIpPacket(const Buffer& packetBuffer, const Interface* inIface) {
   // destination ip address is not targeted to router,
   // which indicates a normal ip packet
   else {
-    RoutingTableEntry entry
-    handleNormalIpPacket(packetBuffer, iface);
+    // look up the routing table
+    try {
+      RoutingTableEntry routingEntry = m_routingTable.lookup(ipHeader->ip_dst);
+    }
+    catch (...) { // can't find such entry
+      std::cerr << "Received ip packet, but cannot find dest ip address in the routing table, ignoring" << std::endl;
+      return;
+    }
+    
+    // basic address info of this packet
+    Interface* outIface = findIfaceByName(routingEntry.ifName);
+    if (outIface == nullptr) {
+      std::cout << "`handleNormalIpPacket` error, packet has the interface the router does not have" << std::endl;
+      return;
+    }
+    const uint32_t outSrcIp = outIface->ip;
+    const Buffer outSrcMac = outIface->mac;
+    const uint32_t outDestIp = routingEntry.gw;
+    
+    // look up the arp cache to know destination mac address
+    std::shared_ptr<ArpEntry> arpEntry = m_arp.lookup(outDestIp);
+    if (!arpEntry) { // can't find such entry
+      // add a new request to queue maintained by m_arp
+      m_arp.queueRequest(outDestIp, packetBuffer, arpEntry.ifName);
+
+      // send arp request packet(wait for reply)
+      const Buffer broadcastMac(ETHER_ADDR_LEN, 0xff);
+      sendArpPacket(outSrcIp, outSrcMac, outDestIp, broadcastMac, arp_op_request);
+    }
+    else {          // find such entry
+      // modify some info and forward
+      memcpy(ethernetHeader->ether_dhost, &(arpEntry->mac[0]), ETHER_ADDR_LEN);
+      memcpy(ethernetHeader->ether_shost, &(outSrcMac[0]), ETHER_ADDR_LEN);
+      ipHeader->ttl--;
+      ipHeader->checksum = 0;
+      ipHeader->checksum = cksum(ipHeader, sizeof(ip_hdr));
+      sendPacket(packetBuffer, outIface->name);
+      free(arpEntry);
+    }
   }
 }
 
-void sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIface, uint8_t type, uint8_t code) {
+void sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIface, const uint8_t type, const uint8_t code) {
   uint8_t* inPacket = inPacketBuffer.data();
   const size_t frameSize = sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_hdr);
   uint8_t outPacket[frameSize];
@@ -243,7 +286,7 @@ void sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIface, uint
   sendPacket(outPacketBuffer, inIface->name);
 }
 
-void sendIcmpT3Packet(const Buffer& inPacketBuffer, const Interface* inIface, uint8_t type, uint8_t code) {
+void sendIcmpT3Packet(const Buffer& inPacketBuffer, const Interface* inIface, const uint8_t type, const uint8_t code) {
   uint8_t* inPacket = packetBuffer.data();
   const size_t frameSize = sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_t3_hdr);
   uint8_t outPacket[frameSize];

@@ -34,40 +34,17 @@ handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
       // TODO: cache remove_request(request)
       removeRequest(request);
     } else {
-      // TODO: send arp request
-      const Interface* sIface = m_router.findIfaceByName(request.packets[0].iface);
-      if (sIface == nullptr) {
+      // send arp request packet
+      const Interface* outIface = m_router.findIfaceByName(request->packets[0].iface);
+      if (outIface == nullptr) {
         std::cout << "`handleArpRequest` error, packet has the interface the router does not have" << std::endl;
         return;
       }
+      const uint32_t outSrcIp = outIface->ip;
+      const Buffer outSrcMac = outIface->mac;
+      const uint32_t outDestIp = request->ip;
       const Buffer broadcastMac(6, 0xff);
-
-      const size_t frameSize = sizeof(arp_hdr) + sizeof(ethernet_hdr);
-      uint8_t frameRaw[frameSize];
-
-      // fill in ethernet header
-      ethernet_hdr* ethernetHeader = (ethernet_hdr*)frameRaw;
-      memcpy(ethernetHeader->ether_dhost, &(broadcastMac[0]), ETHER_ADDR_LEN);
-      memcpy(ethernetHeader->ether_shost, &(sIface->addr[0]), ETH_ADDR_LEN);
-      ethernetHeader->ether_type = ethertype_arp;
-
-      // fill in arp header
-      arp_hdr* arpHeader = (arp_hdr*)(frameRaw + sizeof(ethernet_hdr));
-      arpHeader.arp_hrd = arp_hrd_ethernet;
-      arpHeader.arp_pro = ethertype_ip;
-      arpHeader.arp_hln = 0x06;
-      arpHeader.arp_pln = 0x04;
-      arpHeader.arp_op = arp_op_request;
-      memcpy(arpHeader.arp_sha, &(sIface->addr[0]), ETHER_ADDR_LEN);
-      arpHeader.arp_sip = sIface->ip;
-      memcpy(arpHeader.arp_tha, &(broadcastMac[0]), ETHER_ADDR_LEN);
-      arpHeader.arp_tip = request.ip;
-
-      // convert to Buffer type
-      Buffer frame(frameRaw, frameRaw + frameSize);
-
-      // send frame
-      m_router.sendPacket(frame, sIface->name);
+      m_router.sendArpPacket(outSrcIp, outSrcMac, outDestIp, broadcastMac, arp_op_request);
 
       // update request info
       now = steady_clock::now();
