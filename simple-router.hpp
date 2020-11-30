@@ -52,6 +52,31 @@ public:
   sendPacket(const Buffer& packet, const std::string& outIface);
 
   /**
+  */
+  void
+  handleArpPacket(const Buffer& packetBuffer, const Interface* inIface);
+
+  /**
+  */
+  void
+  sendArpPacket(const uint32_t srcIp, const Buffer& srcMac, const uint32_t destIp, const Buffer& destMac, const arp_opcode arp_op);
+
+  /**
+  */
+  void
+  handleIpPacket(const Buffer& packetBuffer, const Interface* inIface);
+
+  /**
+  */
+  void
+  sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIface, const uint8_t type, const uint8_t code);
+
+  /**
+  */
+  void
+  sendIcmpT3Packet(const Buffer& inPacketBuffer, const Interface* inIface, const uint8_t type, const uint8_t code);
+
+  /**
    * Load routing table information from \p rtConfig file
    */
   bool
