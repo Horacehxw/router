@@ -31,12 +31,12 @@ ArpCache::handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
   if (now - request->timeSent > seconds(1)) {
     if (request->nTimesSent >= MAX_SENT_TIME) {
       // TODO: send icmp host unreachable to source addr of all pkts waiting on this request
-      m_router->sendIcmpPacket();
-      // TODO: cache remove_request(request)
+      // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      // m_router.sendIcmpPacket();
       removeRequest(request);
     } else {
       // send arp request packet
-      const Interface* outIface = m_router.findIfaceByName(request->packets[0].iface);
+      const Interface* outIface = m_router.findIfaceByName(request->packets.front().iface);
       if (outIface == nullptr) {
         std::cout << "`handleArpRequest` error, packet has the interface the router does not have" << std::endl;
         return;
@@ -44,7 +44,7 @@ ArpCache::handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
       const uint32_t outSrcIp = outIface->ip;
       const Buffer outSrcMac = outIface->addr;
       const uint32_t outDestIp = request->ip;
-      const Buffer broadcastMac(6, 0xff);
+      const Buffer broadcastMac(ETHER_ADDR_LEN, 0xff);
       m_router.sendArpPacket(outSrcIp, outSrcMac, outDestIp, broadcastMac, arp_op_request);
 
       // update request info
@@ -69,7 +69,7 @@ ArpCache::periodicCheckArpRequestsAndCacheEntries()
 
   // handle cache entries
   for (auto it = m_cacheEntries.begin(); it != m_cacheEntries.end(); ) {
-    if (!(it->isValid)) {
+    if (!(*it)->isValid) {
       it = m_cacheEntries.erase(it);
     } else {
       it++;

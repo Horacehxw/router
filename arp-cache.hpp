@@ -147,7 +147,7 @@ public:
   /**
   */
   void
-  ArpCache::handleArpRequest(const std::shared_ptr<ArpRequest>& request);
+  handleArpRequest(const std::shared_ptr<ArpRequest>& request);
 
 
   /**
