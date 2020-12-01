@@ -41,7 +41,9 @@ RoutingTable::lookup(uint32_t ip) const
   entries.sort(decByMask);
 
   for (const auto& entry : entries) {
-    if (entry.mask & ip == entry.mask & entry.dest) {
+    if ((entry.mask & ip) == (entry.mask & entry.dest)) {
+      // std::cerr << ip << ", " << entry.dest << std::endl;
+      //printf("%d, %d\n", ip, entry.dest);
       return entry;
     }
   }
