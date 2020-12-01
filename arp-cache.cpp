@@ -26,11 +26,12 @@
 namespace simple_router {
 
 void 
-handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
+ArpCache::handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
   time_point now = steady_clock::now();
-  if (now - request.timeSent > seconds(1)) {
-    if (request.nTimesSent >= MAX_SENT_TIME) {
+  if (now - request->timeSent > seconds(1)) {
+    if (request->nTimesSent >= MAX_SENT_TIME) {
       // TODO: send icmp host unreachable to source addr of all pkts waiting on this request
+      m_router->sendIcmpPacket();
       // TODO: cache remove_request(request)
       removeRequest(request);
     } else {
@@ -41,7 +42,7 @@ handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
         return;
       }
       const uint32_t outSrcIp = outIface->ip;
-      const Buffer outSrcMac = outIface->mac;
+      const Buffer outSrcMac = outIface->addr;
       const uint32_t outDestIp = request->ip;
       const Buffer broadcastMac(6, 0xff);
       m_router.sendArpPacket(outSrcIp, outSrcMac, outDestIp, broadcastMac, arp_op_request);
@@ -68,7 +69,7 @@ ArpCache::periodicCheckArpRequestsAndCacheEntries()
 
   // handle cache entries
   for (auto it = m_cacheEntries.begin(); it != m_cacheEntries.end(); ) {
-    if (!entry->isValid) {
+    if (!(it->isValid)) {
       it = m_cacheEntries.erase(it);
     } else {
       it++;
