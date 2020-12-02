@@ -174,7 +174,7 @@ SimpleRouter::handleIpPacket(const Buffer& packetBuffer, const Interface* inIfac
   }
   
   // check if ttl <= 0, and send an icmp "time exceeding" packet
-  if (ipHeader->ip_ttl <= 0) {
+  if (ipHeader->ip_ttl <= 1) {
     std::cerr << "Received icmp packet, but time exceeding, send this signal" << std::endl;
     sendIcmpT3Packet(packetBuffer, inIface, 11, 0);
     return;
@@ -182,7 +182,7 @@ SimpleRouter::handleIpPacket(const Buffer& packetBuffer, const Interface* inIfac
 
   // destination ip address is targeted to router,
   // which indicates an *icmp* packet
-  if (ipHeader->ip_dst == inIface->ip) {  // ? do other interfaces of router count?
+  if (findIfaceByIp(ipHeader->ip_dst)) {  // other interfaces of router count!!
     // check packet size
     if (packetBuffer.size() < sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_hdr)) {
       std::cerr << "Received icmp packet, but size is less than icmp minimum, ignoring" << std::endl;
@@ -195,6 +195,7 @@ SimpleRouter::handleIpPacket(const Buffer& packetBuffer, const Interface* inIfac
       sendIcmpT3Packet(packetBuffer, inIface, 3, 3);
       return;
     }
+
     // send echo reply to the echo request(received packet)
     sendIcmpPacket(packetBuffer, inIface, 0, 0);
   }
@@ -268,6 +269,14 @@ SimpleRouter::sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIf
   // outIpHeader->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_hdr));
   outIpHeader->ip_ttl = 64;
   outIpHeader->ip_p = ip_protocol_icmp;
+  if (type == 0) { // icmp echo reply
+    outIpHeader->ip_dst = inIpHeader->ip_src;
+    outIpHeader->ip_src = inIpHeader->ip_dst;
+  }
+  else { // icmp packet indicating errors
+    outIpHeader->ip_dst = inIpHeader->ip_src;
+    outIpHeader->ip_src = inIface->ip;
+  }
   outIpHeader->ip_sum = 0;
   outIpHeader->ip_sum = cksum(outIpHeader, sizeof(ip_hdr));
 
@@ -305,6 +314,14 @@ SimpleRouter::sendIcmpT3Packet(const Buffer& inPacketBuffer, const Interface* in
   outIpHeader->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
   outIpHeader->ip_ttl = 64;
   outIpHeader->ip_p = ip_protocol_icmp;
+  if (type == 0) { // icmp echo reply
+    outIpHeader->ip_dst = inIpHeader->ip_src;
+    outIpHeader->ip_src = inIpHeader->ip_dst;
+  }
+  else { // icmp packet indicating errors
+    outIpHeader->ip_dst = inIpHeader->ip_src;
+    outIpHeader->ip_src = inIface->ip;
+  }
   outIpHeader->ip_sum = 0;
   outIpHeader->ip_sum = cksum(outIpHeader, sizeof(ip_hdr));
 
@@ -369,7 +386,7 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
     handleArpPacket(packet, iface);
   } 
   else if (ntohs(ethernetHeader->ether_type) == ethertype_ip) {
-    ip_hdr* ipHeader = (ip_hdr*)datagram;
+    //ip_hdr* ipHeader = (ip_hdr*) datagram;
     
     handleIpPacket(packet, iface);
   } 
