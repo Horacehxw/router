@@ -248,9 +248,9 @@ SimpleRouter::handleIpPacket(const Buffer& packetBuffer, const Interface* inIfac
 void 
 SimpleRouter::sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIface, const uint8_t type, const uint8_t code) {
   uint8_t* inPacket = (uint8_t*) inPacketBuffer.data();
-  const size_t frameSize = sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_hdr);
-  // const size_t frameSize = inPacketBuffer.size();
-  uint8_t outPacket[frameSize];
+  // const size_t frameSize = sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_hdr);
+  size_t frameSize = inPacketBuffer.size();
+  uint8_t* outPacket = new uint8_t[frameSize];
   memcpy(outPacket, inPacket, frameSize);
   // inPacket
   ethernet_hdr* inEthernetHeader = (ethernet_hdr*) inPacket;
@@ -265,7 +265,7 @@ SimpleRouter::sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIf
   memcpy(outEthernetHeader->ether_dhost, inEthernetHeader->ether_shost, ETHER_ADDR_LEN);
 
   // fill in ip header
-  outIpHeader->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_hdr));
+  // outIpHeader->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_hdr));
   outIpHeader->ip_ttl = 64;
   outIpHeader->ip_p = ip_protocol_icmp;
   outIpHeader->ip_sum = 0;
@@ -275,10 +275,12 @@ SimpleRouter::sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIf
   outIcmpHeader->icmp_type = type;
   outIcmpHeader->icmp_code = code;
   outIcmpHeader->icmp_sum = 0;
-  outIcmpHeader->icmp_sum = cksum(outIcmpHeader, sizeof(icmp_hdr));
+  // outIcmpHeader->icmp_sum = cksum(outIcmpHeader, sizeof(icmp_hdr));
+  outIcmpHeader->icmp_sum = cksum(outIcmpHeader, frameSize - sizeof(ethernet_hdr) - sizeof(ip_hdr));
 
   Buffer outPacketBuffer(outPacket, outPacket + frameSize);
   sendPacket(outPacketBuffer, inIface->name);
+  delete outPacket;
 }
 
 void 
