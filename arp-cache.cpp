@@ -27,13 +27,24 @@ namespace simple_router {
 
 void 
 ArpCache::handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
-  time_point now = steady_clock::now();
-  if (now - request->timeSent > seconds(1)) {
+  return;
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+// IMPLEMENT THIS METHOD
+void
+ArpCache::periodicCheckArpRequestsAndCacheEntries()
+{
+  // handle arp requests
+  for (auto it = m_arpRequests.begin(); it != m_arpRequests.end(); ) {
+    auto request = *it;
     if (request->nTimesSent >= MAX_SENT_TIME) {
       // TODO: send icmp host unreachable to source addr of all pkts waiting on this request
       // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       // m_router.sendIcmpPacket();
-      removeRequest(request);
+      it = m_arpRequests.erase(it);
+      // removeRequest(*it);
     } else {
       // send arp request packet
       const Interface* outIface = m_router.findIfaceByName(request->packets.front().iface);
@@ -48,23 +59,12 @@ ArpCache::handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
       m_router.sendArpPacket(outSrcIp, outSrcMac, outDestIp, broadcastMac, arp_op_request);
 
       // update request info
-      now = steady_clock::now();
+      time_point now = steady_clock::now();
       request->timeSent = now;
       request->nTimesSent++;
-    }
-  }
-}
 
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-// IMPLEMENT THIS METHOD
-void
-ArpCache::periodicCheckArpRequestsAndCacheEntries()
-{
-  // TODO: 重构！
-  // handle arp requests
-  for (const auto& request :m_arpRequests) {
-    handleArpRequest(request);
+      it++;
+    }
   }
 
   // handle cache entries
@@ -151,7 +151,9 @@ ArpCache::insertArpEntry(const Buffer& mac, uint32_t ip)
                              return (request->ip == ip);
                            });
   if (request != m_arpRequests.end()) {
-    return *request;
+    auto ret = *request;
+    m_arpRequests.erase(request);
+    return ret;
   }
   else {
     return nullptr;

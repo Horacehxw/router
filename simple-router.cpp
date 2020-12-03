@@ -35,17 +35,21 @@ inline bool isRouterMac(const Buffer& mac, const Interface* inIface) {
 
 void 
 SimpleRouter::handleArpPacket(const Buffer& packetBuffer, const Interface* inIface) {
+  std::cerr << "111" << std::endl;
+
   uint8_t* packet = (uint8_t*) packetBuffer.data();
   arp_hdr* arpHeader = (arp_hdr*) (packet + sizeof(ethernet_hdr));
 
   /* sanity check */
 
+  std::cerr << "222" << std::endl;
   // check packet size
   if (packetBuffer.size() < sizeof(ethernet_hdr) + sizeof(arp_hdr)) {
     std::cerr << "Received arp packet, but size is less than arp minimum, ignoring" << std::endl;      
     return;
   }
 
+  std::cerr << "333" << std::endl;
   // check hardware type, protocol type, opcode
   if (ntohs(arpHeader->arp_hrd) != arp_hrd_ethernet || ntohs(arpHeader->arp_pro) != ethertype_ip ||
       (ntohs(arpHeader->arp_op) != arp_op_request && ntohs(arpHeader->arp_op) != arp_op_reply)) {
@@ -53,6 +57,7 @@ SimpleRouter::handleArpPacket(const Buffer& packetBuffer, const Interface* inIfa
     return;
   }
 
+  std::cerr << "444" << std::endl;
   // check: destination ip address must be targeted to router,
   // otherwise router doesn't have to make any response
   if (arpHeader->arp_tip != inIface->ip) {
@@ -64,8 +69,10 @@ SimpleRouter::handleArpPacket(const Buffer& packetBuffer, const Interface* inIfa
   Buffer arpSourceMac(arpHeader->arp_sha, arpHeader->arp_sha + ETHER_ADDR_LEN);
 
   /* handle arp request or reply */
+  std::cerr << "555" << std::endl;
 
   if (ntohs(arpHeader->arp_op) == arp_op_request) {
+    std::cerr << "receive an ARP REQUEST!!!" << std::endl;
     // // examine destination hardware address(target mac address)
     // if (!isBroadcastMac(arpTargetMac)) {
     //   std::cerr << "Received arp request packet, but target mac address is not broadcasted one, ignoring" << std::endl;
@@ -86,7 +93,8 @@ SimpleRouter::handleArpPacket(const Buffer& packetBuffer, const Interface* inIfa
     sendArpPacket(srcIp, srcMac, destIp, destMac, arp_op_reply);
     return;
   }
-  else if (arpHeader->arp_op == arp_op_reply) {
+  else if (ntohs(arpHeader->arp_op) == arp_op_reply) {
+    std::cerr << "receive an ARP REPLY!!!" << std::endl;
     // check destination hardware address(target mac address)
     if (!isRouterMac(arpTargetMac, inIface)) {
       std::cerr << "Received arp reply packet, but target mac address is not router's one, ignoring" << std::endl;
@@ -96,23 +104,35 @@ SimpleRouter::handleArpPacket(const Buffer& packetBuffer, const Interface* inIfa
     // add request info to arp cache
     // ! maybe need to check entry existence before adding too!
     std::shared_ptr<ArpRequest> request = m_arp.insertArpEntry(arpSourceMac, arpHeader->arp_sip);  
-
+    if (request == nullptr) {
+      std::cerr << "Received arp reply, but the router does not need it any more, ignoring" << std::endl;
+      return;
+    }
     // forward all packets attached to the arp request
     std::cerr << "handleArpPacket: after receiving reply, need to forward packets" << std::endl;
+    std::cerr << "request info related to the reply: " << std::endl;
+    std::cerr << "request is null??" << (request == nullptr) << std::endl;
+    std::cerr << ipToString(request->ip) << ", " << request->nTimesSent << ", " << request->packets.size() << std::endl;
+
     for (auto it = request->packets.begin(); it != request->packets.end(); it++) {
       const Interface* outIface = findIfaceByName(it->iface);
       uint8_t* packetRaw = it->packet.data();
       ethernet_hdr* ethernetHeader = (ethernet_hdr*) (packetRaw);
+      ip_hdr* ipHeader = (ip_hdr*) (packetRaw + sizeof(ethernet_hdr));
       memcpy(ethernetHeader->ether_dhost, arpHeader->arp_sha, ETHER_ADDR_LEN);
       memcpy(ethernetHeader->ether_shost, &(outIface->addr[0]), ETHER_ADDR_LEN);
+      ipHeader->ip_ttl--;
+      ipHeader->ip_sum = 0;
+      ipHeader->ip_sum = cksum(ipHeader, sizeof(ip_hdr));
 
       print_hdrs(it->packet);
       sendPacket(it->packet, it->iface);
       std::cerr << std::endl;
     }
 
+
     // remove the arp request from request queue maintained by m_arp
-    m_arp.removeRequest(request);
+    //m_arp.removeRequest(request);
   }
 }
 
