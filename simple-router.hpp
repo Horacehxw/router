@@ -41,7 +41,24 @@ public:
    * complete with ethernet headers.
    */
   void
-  handlePacket(const Buffer& packet, const std::string& inIface);
+  handlePacket(const Buffer& packetBuffer, const std::string& inIface);
+
+  void
+  handleArpPacket(const Buffer& packetBuffer, const Interface* inIface);
+
+  void
+  handleIpPacket(const Buffer& packetBuffer, const Interface* inIface);
+
+  void
+  sendArpPacket(const uint32_t srcIp, const Buffer& srcMac,
+      const uint32_t destIp, const Buffer& destMac, const arp_opcode arp_op);
+  void
+  sendIcmpT3Packet(const Buffer& packetBuffer, const Interface* inIface, 
+      uint8_t type, uint8_t code); 
+  void
+  sendIcmpPacket(const Buffer& packetBuffer, const Interface* inIface,
+      uint8_t type, uint8_t code);
+
 
   /**
    * USE THIS METHOD TO SEND PACKETS
@@ -50,31 +67,6 @@ public:
    */
   void
   sendPacket(const Buffer& packet, const std::string& outIface);
-
-  /**
-  */
-  void
-  handleArpPacket(const Buffer& packetBuffer, const Interface* inIface);
-
-  /**
-  */
-  void
-  sendArpPacket(const uint32_t srcIp, const Buffer& srcMac, const uint32_t destIp, const Buffer& destMac, const arp_opcode arp_op);
-
-  /**
-  */
-  void
-  handleIpPacket(const Buffer& packetBuffer, const Interface* inIface);
-
-  /**
-  */
-  void
-  sendIcmpPacket(const Buffer& inPacketBuffer, const Interface* inIface, const uint8_t type, const uint8_t code);
-
-  /**
-  */
-  void
-  sendIcmpT3Packet(const Buffer& inPacketBuffer, const Interface* inIface, const uint8_t type, const uint8_t code);
 
   /**
    * Load routing table information from \p rtConfig file

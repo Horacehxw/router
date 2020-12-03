@@ -25,42 +25,45 @@
 
 namespace simple_router {
 
-void 
-ArpCache::handleArpRequest(const std::shared_ptr<ArpRequest>& request) {
-  return;
-}
-
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 // IMPLEMENT THIS METHOD
 void
 ArpCache::periodicCheckArpRequestsAndCacheEntries()
 {
+  const Buffer broadcastMac(ETHER_ADDR_LEN, 0xff);
+
   // handle arp requests
   for (auto it = m_arpRequests.begin(); it != m_arpRequests.end(); ) {
-    auto request = *it;
+    auto request = *it; 
+
     if (request->nTimesSent >= MAX_SENT_TIME) {
-      // TODO: send icmp host unreachable to source addr of all pkts waiting on this request
-      // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      // m_router.sendIcmpPacket();
+      // send icmp host unreachable to source addr of all pkts waiting on this request
+      for (auto& packet: request->packets) {
+        uint8_t* outPacket = packet.packet.data();
+        ethernet_hdr* outEthernetHeader = (ethernet_hdr*) outPacket;
+        Buffer outSrcMac(outEthernetHeader->ether_dhost, outEthernetHeader->ether_dhost + ETHER_ADDR_LEN);
+        const Interface* outIface = m_router.findIfaceByMac(outSrcMac);
+        m_router.sendIcmpT3Packet(packet.packet, outIface, 3, 1);
+      }
+
+      // remove request
       it = m_arpRequests.erase(it);
-      // removeRequest(*it);
+
     } else {
-      // send arp request packet
+      // send an arp request again
       const Interface* outIface = m_router.findIfaceByName(request->packets.front().iface);
-      if (outIface == nullptr) {
+      if (!outIface) {
         std::cout << "`handleArpRequest` error, packet has the interface the router does not have" << std::endl;
         return;
       }
       const uint32_t outSrcIp = outIface->ip;
       const Buffer outSrcMac = outIface->addr;
       const uint32_t outDestIp = request->ip;
-      const Buffer broadcastMac(ETHER_ADDR_LEN, 0xff);
       m_router.sendArpPacket(outSrcIp, outSrcMac, outDestIp, broadcastMac, arp_op_request);
 
-      // update request info
-      time_point now = steady_clock::now();
-      request->timeSent = now;
+      // update the queued request's data. 
+      request->timeSent = steady_clock::now();
       request->nTimesSent++;
 
       it++;
