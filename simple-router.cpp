@@ -189,7 +189,7 @@ SimpleRouter::handleIpPacket(const Buffer& packetBuffer, const Interface* inIfac
   }
 
   // if a packet dies of old age, send a ICMP timeout response. 
-  if (ipHeader->ip_ttl <= 1) {
+  if (ipHeader->ip_ttl <= 0) {
     std::cerr << "Received icmp packet, but time exceeding, send this signal" << std::endl;
     sendIcmpT3Packet(packetBuffer, inIface, 11, 0);
     return;
@@ -220,6 +220,11 @@ SimpleRouter::handleIpPacket(const Buffer& packetBuffer, const Interface* inIfac
   // which indicates a *normal ip* packet
   else {
     /* Forward packet */
+    if (ipHeader->ip_ttl == 1) {
+      std::cerr << "Received icmp packet, but time exceeding, send this signal" << std::endl;
+      sendIcmpT3Packet(packetBuffer, inIface, 11, 0);
+      return;
+    }
 
     // look up the routing table
     RoutingTableEntry routingEntry = { 0 };
