@@ -65,6 +65,14 @@ arp数据包，只可能被回复而不可能被转发；普通ip数据包，路
 
 返回错误信息时，有一个小trick。`arp request`数据结构中，每个`PendingPacket`元素的`iface`指代该包正常转发情况下的出口，而返回错误信息时，需要使得icmp错误信息从它进入路由器的入口原路返回，因此需要从数据包本身的以太帧头部获取目的mac地址信息，进入找到当初的入口。因此，数据包放进等待队列时不能急于为了转发修改信息，而要等到真正出队列、被转发的那一刻。
 
+### 具体技术难题：是否收到arp reply就应该向`arp cache`数据结构添加一条映射信息
+
+路由器之所以收到arp reply，一定是因为之前它向别的结点发送了对应的arp request，而且当时`arp cache`数据结构没有想要的mac地址，因此貌似可以直接将arp reply中的mac地址存入`arp cache`。
+
+但是并不能直接这样做，因为路由器是周期性地重复发送arp request，假设这样一种情形：路由器一共发送了两个arp request，则会先后收到两个相同的arp reply，收到第一个时ip地址和mac地址的映射将被存储进`arp cache`数据结构，而`arp request`数据结构也会移除相应的请求；而收到第二个arp reply时，显然路由器应该忽略之！
+
+本次作业`handleArpPacket`函数中，收到arp reply后首先会查询`arp cache`判断reply信息有没有重复（通过`lookup`函数判断而非`insertCacheEntry`函数返回值判断，因为不管有没有重复，`insertCacheEntry`函数都会添加这个信息进入`arp cache`）。没有加上此逻辑时，下载大文件会出现`segment fault(core dumped)`错误，添加完成后不再出现（至少本人测试的有限次数里未出现此错误，万一助教测试时出现，希望能够多测几次，也许下一次就成功了，感谢！）
+
 ### 其他难题：调试困难
 
 本次作业只能输出调试，比较麻烦。在调试过程中，发现`arp-cache.cpp`文件的函数中使用`std::cerr`时，vscode语法报错“`cerr`不是`std`的成员”，上网搜索未能解决。
