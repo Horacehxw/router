@@ -126,7 +126,15 @@ SimpleRouter::handleArpPacket(const Buffer& packetBuffer, const Interface* inIfa
       // ? maybe need to check entry existence before adding too ?
     uint32_t inSrcIp = arpHeader->arp_sip;
     Buffer inSrcMac(arpHeader->arp_sha, arpHeader->arp_sha + ETHER_ADDR_LEN);
-    std::shared_ptr<ArpRequest> request = m_arp.insertArpEntry(inSrcMac, inSrcIp); 
+    if (m_arp.lookup(inSrcIp) != nullptr) {
+      std::cerr << "111" << std::endl;
+      return;
+    }
+    std::shared_ptr<ArpRequest> request = m_arp.insertArpEntry(inSrcMac, inSrcIp);
+    if (request == nullptr) {
+      std::cerr << "222" << std::endl;
+      return;
+    }
 
     // forward all packets attached to the arp request
     for (auto& packet: request->packets) {
@@ -146,7 +154,7 @@ SimpleRouter::handleArpPacket(const Buffer& packetBuffer, const Interface* inIfa
     }
       
     // remove the arp request from request queue maintained by m_arp
-    // m_arp.removeRequest(request);
+    m_arp.removeRequest(request);
     return;
 
   } else { 
